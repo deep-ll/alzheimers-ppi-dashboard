@@ -54,7 +54,7 @@ def main():
     graph_path = os.path.join(processed_dir, "pyg_ppi_graph.pt")
     
     print("Loading graph data...")
-    data = torch.load(graph_path)
+    data = torch.load(graph_path, weights_only=False)
     
     # Split edges into Train (70%), Val (10%), Test (20%)
     # This automatically adds negative samples for link prediction
