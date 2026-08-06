@@ -36,14 +36,29 @@ class ProteinFeatureExtractor:
         else:
             raise ValueError(f"Could not find sequence for {identifier} in UniProt.")
 
-    def get_embedding(self, sequence_or_id: str) -> torch.Tensor:
+    
+        def get_embedding(self, sequence_or_id: str) -> torch.Tensor:
         """
         Converts a sequence/ID into a 1024-D ProtBERT embedding tensor [1, 1024].
         """
-        # 1. Obtain raw amino acid sequence
-        if len(sequence_or_id) > 20 and all(c.upper() in 'ACDEFGHIKLMNPQRSTVWY' for c in sequence_or_id):
+        # 1. Obtain raw amino acid sequence safely
+        # Check if it is a raw sequence by seeing if it contains primarily amino acid characters
+        # We lower the length check so it catches small peptides, and we check if the majority 
+        # of characters are valid amino acids rather than checking every single character.
+        
+        valid_aa = set('ACDEFGHIKLMNPQRSTVWYX')
+        is_raw_sequence = False
+        
+        if len(sequence_or_id) >= 5: # Even small peptides shouldn't be sent to API
+            # Check if at least 90% of characters are valid AAs
+            valid_count = sum(1 for char in sequence_or_id.upper() if char in valid_aa)
+            if valid_count / len(sequence_or_id) > 0.9:
+                is_raw_sequence = True
+
+        if is_raw_sequence:
             sequence = sequence_or_id.upper()
         else:
+            # If it's short like "APP" or "P05067", hit the API
             sequence = self.fetch_sequence_from_uniprot(sequence_or_id)
         
         # 2. ProtBERT formatting (space between amino acids, map rare AAs to X)
