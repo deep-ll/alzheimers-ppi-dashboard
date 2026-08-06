@@ -8,7 +8,7 @@ from torch_geometric.data import Data
 
 def download_file(url, file_path):
     if not os.path.exists(file_path):
-        print(f"Downloading {os.path.basename(file_path)}...")
+        print(f"Downloading {os.path.basename(file_path)}... (This might take a moment)")
         response = requests.get(url, stream=True)
         response.raise_for_status()
         with open(file_path, "wb") as f:
@@ -24,7 +24,6 @@ def build_graph(raw_dir, processed_dir, num_edges=100000):
     links_path = download_file(links_url, os.path.join(raw_dir, "9606.links.txt.gz"))
     
     print("Loading edges directly from gzip...")
-    # Pandas can read .gz files natively!
     df = pd.read_csv(links_path, sep=' ')
     
     # Filter for high confidence
@@ -40,32 +39,29 @@ def build_graph(raw_dir, processed_dir, num_edges=100000):
     
     print(f"Graph contains {len(unique_proteins):,} unique proteins.")
     
-    # 2. Build edge_index
+    # 2. Build edge_index (Fixed PyTorch warning here by using np.array)
     print("Building edge connections...")
     df_sampled['src'] = df_sampled['protein1'].map(protein_to_idx)
     df_sampled['dst'] = df_sampled['protein2'].map(protein_to_idx)
-    edge_index = torch.tensor([df_sampled['src'].values, df_sampled['dst'].values], dtype=torch.long)
     
-    # 3. Load pre-computed ESM embeddings
+    edges_array = np.array([df_sampled['src'].values, df_sampled['dst'].values])
+    edge_index = torch.tensor(edges_array, dtype=torch.long)
+    
+    # 3. Download and Load Pre-computed STRING Embeddings
+    embeddings_url = "https://stringdb-downloads.org/download/protein.sequence.embeddings.v12.0/9606.protein.sequence.embeddings.v12.0.h5"
+    h5_path = download_file(embeddings_url, os.path.join(raw_dir, "9606.protein.sequence.embeddings.v12.0.h5"))
+    
     x = torch.zeros((len(unique_proteins), 1024), dtype=torch.float)
     missing_proteins = 0
     
-    # Note: Ensure you have placed your downloaded ESM .h5 file in the raw_data folder
-    h5_path = os.path.join(raw_dir, "esm_embeddings.h5")
-    
-    if os.path.exists(h5_path):
-        print(f"Extracting embeddings from {h5_path}...")
-        with h5py.File(h5_path, 'r') as h5_file:
-            for protein_id, idx in protein_to_idx.items():
-                if protein_id in h5_file:
-                    x[idx] = torch.tensor(np.array(h5_file[protein_id]))
-                else:
-                    missing_proteins += 1
-        print(f"Embeddings loaded. {missing_proteins} proteins lacked pre-computed embeddings.")
-    else:
-        print(f"⚠️ WARNING: {h5_path} not found!")
-        print("Using random fallback features so the pipeline doesn't crash.")
-        x = torch.randn((len(unique_proteins), 1024), dtype=torch.float)
+    print(f"Extracting embeddings from {os.path.basename(h5_path)}...")
+    with h5py.File(h5_path, 'r') as h5_file:
+        for protein_id, idx in protein_to_idx.items():
+            if protein_id in h5_file:
+                x[idx] = torch.tensor(np.array(h5_file[protein_id]))
+            else:
+                missing_proteins += 1
+    print(f"Embeddings loaded. {missing_proteins} proteins lacked pre-computed embeddings.")
 
     # 4. Save the graph object
     data = Data(x=x, edge_index=edge_index)
