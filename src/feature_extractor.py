@@ -1,0 +1,1 @@
+# ProtBERT Embeddings Extractor

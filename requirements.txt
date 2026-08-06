@@ -1,0 +1,10 @@
+streamlit
+torch
+torch-geometric
+transformers
+wandb
+scikit-learn
+pandas
+numpy
+requests
+gdown
