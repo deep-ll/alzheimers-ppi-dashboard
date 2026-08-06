@@ -37,7 +37,7 @@ class ProteinFeatureExtractor:
             raise ValueError(f"Could not find sequence for {identifier} in UniProt.")
 
     
-        def get_embedding(self, sequence_or_id: str) -> torch.Tensor:
+    def get_embedding(self, sequence_or_id: str) -> torch.Tensor:
         """
         Converts a sequence/ID into a 1024-D ProtBERT embedding tensor [1, 1024].
         """
