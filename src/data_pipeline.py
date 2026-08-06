@@ -5,6 +5,7 @@ Downloads the human PPI network AND sequences from STRING DB,
 samples 100,000 edges, generates REAL ProtBERT embeddings, 
 and builds a PyTorch Geometric Data object.
 """
+import re
 import os
 import torch
 import pandas as pd
