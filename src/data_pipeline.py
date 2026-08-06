@@ -95,10 +95,19 @@ def build_graph(raw_dir, processed_dir, num_edges=100000):
         raw_sequence = protein_sequences.get(protein, "")
         
         if raw_sequence:
-            # Pass the raw amino acid string directly to your existing extractor
-            # It returns a [1, 1024] tensor, which we squeeze and assign to the node row
-            embedding = extractor.get_embedding(raw_sequence)
-            x[idx] = embedding.squeeze(0).cpu() 
+            # Ensure the raw sequence is a string and force the extraction
+            # We skip the ID/Sequence logic entirely since we know it's a sequence from FASTA
+            spaced_sequence = " ".join(list(re.sub(r"[UZOB]", "X", raw_sequence.upper())))
+            
+            encoded = extractor.tokenizer(
+                spaced_sequence, return_tensors='pt', padding=True, truncation=True, max_length=1024
+            ).to(extractor.device)
+            
+            with torch.no_grad():
+                out = extractor.model(**encoded)
+                embedding = torch.mean(out.last_hidden_state, dim=1)
+                
+            x[idx] = embedding.squeeze(0).cpu()
         else:
             # Fallback for missing sequences (very rare in STRING)
             print(f"Warning: No sequence found for {protein}")
