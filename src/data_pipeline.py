@@ -39,7 +39,7 @@ def build_graph(raw_dir, processed_dir, num_edges=100000):
     
     print(f"Graph contains {len(unique_proteins):,} unique proteins.")
     
-    # 2. Build edge_index (Fixed PyTorch warning here by using np.array)
+    # 2. Build edge_index
     print("Building edge connections...")
     df_sampled['src'] = df_sampled['protein1'].map(protein_to_idx)
     df_sampled['dst'] = df_sampled['protein2'].map(protein_to_idx)
@@ -52,16 +52,41 @@ def build_graph(raw_dir, processed_dir, num_edges=100000):
     h5_path = download_file(embeddings_url, os.path.join(raw_dir, "9606.protein.sequence.embeddings.v12.0.h5"))
     
     x = torch.zeros((len(unique_proteins), 1024), dtype=torch.float)
-    missing_proteins = 0
+    found_count = 0
     
-    print(f"Extracting embeddings from {os.path.basename(h5_path)}...")
+    print(f"Extracting embeddings from {os.path.basename(h5_path)}... (Reading metadata attributes)")
     with h5py.File(h5_path, 'r') as h5_file:
-        for protein_id, idx in protein_to_idx.items():
-            if protein_id in h5_file:
-                x[idx] = torch.tensor(np.array(h5_file[protein_id]))
-            else:
-                missing_proteins += 1
-    print(f"Embeddings loaded. {missing_proteins} proteins lacked pre-computed embeddings.")
+        for dataset_key in h5_file.keys():
+            dataset = h5_file[dataset_key]
+            
+            # The real protein ID is hidden in the dataset's attributes
+            if "original_id" in dataset.attrs:
+                orig_id = dataset.attrs["original_id"]
+                
+                # Decode bytes to string if needed
+                if isinstance(orig_id, bytes):
+                    orig_id = orig_id.decode('utf-8')
+                elif isinstance(orig_id, np.ndarray):
+                    orig_id = orig_id[0] if orig_id.size == 1 else orig_id
+                    if isinstance(orig_id, bytes):
+                        orig_id = orig_id.decode('utf-8')
+                        
+                # Check if this protein is in our network
+                if orig_id in protein_to_idx:
+                    idx = protein_to_idx[orig_id]
+                    
+                    # Read the array
+                    raw_emb = np.array(dataset)
+                    
+                    # STRING embeddings are (Length x 1024). Compress via mean pooling.
+                    if raw_emb.ndim == 2:
+                        raw_emb = raw_emb.mean(axis=0)
+                        
+                    x[idx] = torch.tensor(raw_emb, dtype=torch.float)
+                    found_count += 1
+
+    missing_proteins = len(unique_proteins) - found_count
+    print(f"Embeddings loaded successfully! Found: {found_count:,} | Missing: {missing_proteins:,}")
 
     # 4. Save the graph object
     data = Data(x=x, edge_index=edge_index)
@@ -74,7 +99,6 @@ def build_graph(raw_dir, processed_dir, num_edges=100000):
     print(f"✅ Graph built and saved successfully to {processed_dir}")
 
 if __name__ == "__main__":
-    # Correct paths pointing to your Google Drive
     DRIVE_BASE = "/content/drive/MyDrive/Alzheimers_PPI_Project"
     RAW_DIR = os.path.join(DRIVE_BASE, "raw_data")
     PROCESSED_DIR = os.path.join(DRIVE_BASE, "processed")
