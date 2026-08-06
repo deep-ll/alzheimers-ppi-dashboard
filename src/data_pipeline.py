@@ -5,6 +5,8 @@ Downloads the human PPI network AND sequences from STRING DB,
 samples 100,000 edges, generates REAL ProtBERT embeddings, 
 and builds a PyTorch Geometric Data object.
 """
+import h5py
+import numpy as np
 import re
 import os
 import torch
@@ -57,38 +59,55 @@ def load_fasta_sequences(fasta_path, target_proteins):
             
     return sequences
 
-def build_graph(raw_dir, processed_dir, num_edges=100000):
-    # 1. Download Links and Sequences
-    links_url = "https://stringdb-downloads.org/download/protein.links.v12.0/9606.protein.links.v12.0.txt.gz"
-    fasta_url = "https://stringdb-downloads.org/download/protein.sequences.v12.0/9606.protein.sequences.v12.0.fa.gz"
-    
-    links_path = download_file(links_url, os.path.join(raw_dir, "9606.links.txt.gz"))
-    fasta_path = download_file(fasta_url, os.path.join(raw_dir, "9606.sequences.fa.gz"))
 
-    # 2. Parse edges and sample
-    print("Loading network data...")
-    df = pd.read_csv(links_path, sep=' ')
-    df_high_conf = df[df['combined_score'] >= 700].copy()
-    df_sampled = df_high_conf.sample(n=num_edges, random_state=42).copy() if len(df_high_conf) > num_edges else df_high_conf.copy()
+
+def build_graph(raw_dir, processed_dir, num_edges=100000):
+    print("Loading edges...")
+    edges_df = pd.read_csv(
+        os.path.join(raw_dir, "9606.protein.links.detailed.v12.0.txt"), 
+        sep=' ', nrows=num_edges
+    )
     
-    # 3. Get unique proteins and map to IDs
-    unique_proteins = set(df_sampled['protein1']).union(set(df_sampled['protein2']))
-    protein_to_idx = {protein: idx for idx, protein in enumerate(unique_proteins)}
+    # We only care about high confidence experimental/database links for Alzheimer's
+    edges_df = edges_df[(edges_df['experimental'] > 400) | (edges_df['database'] > 400)]
     
-    df_sampled['src'] = df_sampled['protein1'].map(protein_to_idx)
-    df_sampled['dst'] = df_sampled['protein2'].map(protein_to_idx)
-    edge_index = torch.tensor([df_sampled['src'].values, df_sampled['dst'].values], dtype=torch.long)
+    unique_proteins = set(edges_df['protein1']).union(set(edges_df['protein2']))
+    protein_to_idx = {prot: i for i, prot in enumerate(unique_proteins)}
     
-    # 4. Extract Real Sequences
-    protein_sequences = load_fasta_sequences(fasta_path, unique_proteins)
+    print(f"Graph contains {len(unique_proteins)} unique proteins.")
     
-    # 5. Generate Real ProtBERT Embeddings
-    print("\nInitializing ProtBERT (This will take a moment)...")
-    extractor = ProteinFeatureExtractor()
+    # Initialize a tensor for embeddings (ProtT5 uses 1024 dimensions)
+    x = torch.zeros((len(unique_proteins), 1024))
+    missing_proteins = 0
     
-    num_nodes = len(unique_proteins)
-    feature_dim = 1024
-    x = torch.zeros((num_nodes, feature_dim), dtype=torch.float)
+    print("Extracting pre-computed ProtT5 embeddings...")
+    
+    # Load the HDF5 file containing the pre-computed embeddings
+    h5_path = os.path.join(raw_dir, "9606.protein.sequence.embeddings.v12.0.h5")
+    
+    with h5py.File(h5_path, 'r') as h5_file:
+        for protein_id, idx in protein_to_idx.items():
+            # STRING h5 files typically store arrays with the protein ID as the dataset key
+            if protein_id in h5_file:
+                # Extract the embedding, convert to tensor, and assign to the node row
+                embedding_array = np.array(h5_file[protein_id])
+                x[idx] = torch.tensor(embedding_array)
+            else:
+                missing_proteins += 1
+                # If a protein is missing, it remains a zero-vector
+                
+    print(f"Embeddings loaded. {missing_proteins} proteins lacked pre-computed embeddings.")
+
+    # 3. Build edge_index tensor
+    print("Building edge connections...")
+    src = [protein_to_idx[p] for p in edges_df['protein1']]
+    dst = [protein_to_idx[p] for p in edges_df['protein2']]
+    edge_index = torch.tensor([src, dst], dtype=torch.long)
+    
+    # 4. Save the graph object
+    data = Data(x=x, edge_index=edge_index)
+    torch.save(data, os.path.join(processed_dir, "alzheimers_ppi_graph.pt"))
+    print("Graph built and saved successfully!")
     
     print(f"Generating embeddings for {num_nodes} unique proteins...")
     # We sort by index so the tensor perfectly matches the edge_index mapping
