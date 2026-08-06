@@ -51,39 +51,33 @@ def build_graph(raw_dir, processed_dir, num_edges=100000):
     embeddings_url = "https://stringdb-downloads.org/download/protein.sequence.embeddings.v12.0/9606.protein.sequence.embeddings.v12.0.h5"
     h5_path = download_file(embeddings_url, os.path.join(raw_dir, "9606.protein.sequence.embeddings.v12.0.h5"))
     
+    # Initialize all embeddings as zero first
     x = torch.zeros((len(unique_proteins), 1024), dtype=torch.float)
     found_count = 0
     
-    print(f"Extracting embeddings from {os.path.basename(h5_path)}... (Reading metadata attributes)")
+    print(f"Extracting embeddings from {os.path.basename(h5_path)}...")
     with h5py.File(h5_path, 'r') as h5_file:
-        for dataset_key in h5_file.keys():
-            dataset = h5_file[dataset_key]
+        # The AI embeddings are stored in parallel arrays
+        proteins_array = h5_file['proteins'][:]
+        embeddings_matrix = h5_file['embeddings'][:]
+        
+        for i, p_bytes in enumerate(proteins_array):
+            # Decode the bytes format STRING uses
+            p_str = p_bytes.decode('utf-8') if isinstance(p_bytes, bytes) else str(p_bytes)
             
-            # The real protein ID is hidden in the dataset's attributes
-            if "original_id" in dataset.attrs:
-                orig_id = dataset.attrs["original_id"]
+            # Robust mapping in case the '9606.' prefix differs
+            if p_str in protein_to_idx:
+                idx = protein_to_idx[p_str]
+            elif f"9606.{p_str}" in protein_to_idx:
+                idx = protein_to_idx[f"9606.{p_str}"]
+            elif p_str.replace("9606.", "") in protein_to_idx:
+                idx = protein_to_idx[p_str.replace("9606.", "")]
+            else:
+                continue
                 
-                # Decode bytes to string if needed
-                if isinstance(orig_id, bytes):
-                    orig_id = orig_id.decode('utf-8')
-                elif isinstance(orig_id, np.ndarray):
-                    orig_id = orig_id[0] if orig_id.size == 1 else orig_id
-                    if isinstance(orig_id, bytes):
-                        orig_id = orig_id.decode('utf-8')
-                        
-                # Check if this protein is in our network
-                if orig_id in protein_to_idx:
-                    idx = protein_to_idx[orig_id]
-                    
-                    # Read the array
-                    raw_emb = np.array(dataset)
-                    
-                    # STRING embeddings are (Length x 1024). Compress via mean pooling.
-                    if raw_emb.ndim == 2:
-                        raw_emb = raw_emb.mean(axis=0)
-                        
-                    x[idx] = torch.tensor(raw_emb, dtype=torch.float)
-                    found_count += 1
+            # Assign the 1024-d vector to our PyTorch tensor
+            x[idx] = torch.tensor(embeddings_matrix[i], dtype=torch.float)
+            found_count += 1
 
     missing_proteins = len(unique_proteins) - found_count
     print(f"Embeddings loaded successfully! Found: {found_count:,} | Missing: {missing_proteins:,}")
