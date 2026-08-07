@@ -8,10 +8,12 @@ st.set_page_config(page_title="Alzheimer's PPI Predictor", layout="centered")
 st.title("🧬 Alzheimer's Protein Interaction Predictor")
 st.markdown("Use Graph Neural Networks (GAT) to predict undiscovered protein interactions.")
 
-# Cache the model so it only loads once when the app starts
+# Cache the model so it only loads once
 @st.cache_resource
 def load_predictor():
-    processed_dir = "/content/drive/MyDrive/Alzheimers_PPI_Project/processed"
+    # Use relative paths for GitHub hosting!
+    processed_dir = "data" 
+    
     return PPIInference(
         model_path=os.path.join(processed_dir, "gat_link_predictor.pth"),
         graph_path=os.path.join(processed_dir, "pyg_ppi_graph.pt"),
@@ -19,7 +21,7 @@ def load_predictor():
     )
 
 try:
-    with st.spinner("Loading AI Model and 14,000+ proteins..."):
+    with st.spinner("Loading AI Model and 14,000+ proteins... (This takes a few seconds on boot)"):
         predictor = load_predictor()
 except Exception as e:
     st.error(f"Error loading model: {e}")
@@ -46,9 +48,9 @@ if st.button("Predict Interaction", use_container_width=True):
             
             # Display colored metrics based on confidence
             pct = probability * 100
-            if probability > 0.8:
+            if probability > 0.80:
                 st.success(f"**High Confidence:** There is a {pct:.2f}% chance these proteins interact.")
-            elif probability > 0.5:
+            elif probability > 0.50:
                 st.info(f"**Moderate Confidence:** There is a {pct:.2f}% chance these proteins interact.")
             else:
                 st.warning(f"**Low Confidence:** There is a {pct:.2f}% chance these proteins interact.")
