@@ -1,10 +1,10 @@
-streamlit
-torch
-torch-geometric
 transformers
 wandb
-scikit-learn
-pandas
 numpy
 requests
 gdown
+streamlit==1.32.0
+torch==2.6.0
+torch_geometric==2.5.0
+pandas==2.2.0
+scikit-learn==1.4.1.post1
