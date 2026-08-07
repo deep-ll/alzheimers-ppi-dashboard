@@ -1,75 +1,56 @@
-# Main Streamlit Application Entrypoint
-# app.py
 import streamlit as st
-import torch
-import wandb
 import os
-from src.model import GraphSAGEEncoder, EdgeDecoder
-from src.feature_extractor import ProteinFeatureExtractor
+from src.inference import PPIInference
 
-# 1. Page Setup
-st.set_page_config(page_title="Alzheimer's PPI Predictor", page_icon="🧬")
+# Configure the web page
+st.set_page_config(page_title="Alzheimer's PPI Predictor", layout="centered")
+
 st.title("🧬 Alzheimer's Protein Interaction Predictor")
-st.write("Powered by GraphSAGE & ProtBERT")
+st.markdown("Use Graph Neural Networks (GAT) to predict undiscovered protein interactions.")
 
-# 2. Load Models Safely (Cached so it doesn't reload on every button click)
+# Cache the model so it only loads once when the app starts
 @st.cache_resource
-def load_pipeline():
-    # Streamlit uses st.secrets to securely hold your passwords
-    wandb.login(key=st.secrets["WANDB_API_KEY"])
-    run = wandb.init(project="alzheimers-ppi-graphsage", job_type="inference")
-    
-    # Download the best model from your W&B Registry
-    artifact = run.use_artifact('your-username/alzheimers-ppi-graphsage/graphsage-ppi-model:latest')
-    artifact_dir = artifact.download()
-    
-    # Initialize your architecture
-    model = GraphSAGEEncoder(in_channels=1024, hidden_channels=64, out_channels=32)
-    edge_decoder = EdgeDecoder()
-    
-    # Load the weights
-    checkpoint = torch.load(f"{artifact_dir}/best_model.pt", map_location=torch.device('cpu'))
-    model.load_state_dict(checkpoint['model_state'])
-    edge_decoder.load_state_dict(checkpoint['decoder_state'])
-    
-    model.eval()
-    edge_decoder.eval()
-    
-    # Initialize the feature extractor
-    extractor = ProteinFeatureExtractor()
-    
-    return model, edge_decoder, extractor
+def load_predictor():
+    processed_dir = "/content/drive/MyDrive/Alzheimers_PPI_Project/processed"
+    return PPIInference(
+        model_path=os.path.join(processed_dir, "gat_link_predictor.pth"),
+        graph_path=os.path.join(processed_dir, "pyg_ppi_graph.pt"),
+        mapping_path=os.path.join(processed_dir, "node_mapping.csv")
+    )
 
-# Start loading
-with st.spinner("Loading AI Models from Weights & Biases..."):
-    model, edge_decoder, extractor = load_pipeline()
+try:
+    with st.spinner("Loading AI Model and 14,000+ proteins..."):
+        predictor = load_predictor()
+except Exception as e:
+    st.error(f"Error loading model: {e}")
+    st.stop()
 
-# 3. The User Interface
-protein_A = st.text_input("Enter Protein A (e.g., APP, P05067, or sequence)")
-protein_B = st.text_input("Enter Protein B (e.g., MAPT, P10636, or sequence)")
+# Layout: Two columns for selecting proteins
+col1, col2 = st.columns(2)
 
-if st.button("Predict Interaction"):
-    if protein_A and protein_B:
-        with st.spinner("Extracting embeddings and running GraphSAGE..."):
-            try:
-                # Get embeddings
-                feat_A = extractor.get_embedding(protein_A)
-                feat_B = extractor.get_embedding(protein_B)
-                
-                # Format for PyG
-                x = torch.cat([feat_A, feat_B], dim=0)
-                edge_index = torch.tensor([[0], [1]], dtype=torch.long)
-                edge_label_index = torch.tensor([[0], [1]], dtype=torch.long)
-                
-                # Predict
-                with torch.no_grad():
-                    z = model(x, edge_index)
-                    logits = edge_decoder(z, edge_label_index)
-                    probability = torch.sigmoid(logits).item()
-                
-                st.success(f"### Interaction Probability: {probability:.2%}")
-                
-            except Exception as e:
-                st.error(f"Error processing proteins: {str(e)}")
+with col1:
+    p1 = st.selectbox("Select Protein 1 (STRING ID):", predictor.available_proteins, index=0)
+with col2:
+    p2 = st.selectbox("Select Protein 2 (STRING ID):", predictor.available_proteins, index=1)
+
+# Prediction Button
+if st.button("Predict Interaction", use_container_width=True):
+    if p1 == p2:
+        st.warning("Please select two different proteins.")
     else:
-        st.warning("Please enter both proteins.")
+        probability = predictor.predict_interaction(p1, p2)
+        
+        if probability is not None:
+            st.markdown("---")
+            st.subheader("Prediction Result")
+            
+            # Display colored metrics based on confidence
+            pct = probability * 100
+            if probability > 0.8:
+                st.success(f"**High Confidence:** There is a {pct:.2f}% chance these proteins interact.")
+            elif probability > 0.5:
+                st.info(f"**Moderate Confidence:** There is a {pct:.2f}% chance these proteins interact.")
+            else:
+                st.warning(f"**Low Confidence:** There is a {pct:.2f}% chance these proteins interact.")
+        else:
+            st.error("Error finding proteins in the database.")
